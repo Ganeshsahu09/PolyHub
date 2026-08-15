@@ -1,0 +1,10 @@
+{
+  "modelId": "f5faf335-cd7b-4dc9-972c-7723f6e18af2",
+  "quantity": 1,
+  "shippingAddress": {
+    "line1": "123 Test Street",
+    "city": "Mumbai",
+    "postalCode": "400001",
+    "country": "IN"
+  }
+}

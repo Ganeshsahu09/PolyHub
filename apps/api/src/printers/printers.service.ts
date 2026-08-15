@@ -1,0 +1,98 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { UpdatePrinterProfileDto } from './dto/update-printer-profile.dto';
+import { OrderStatus } from '@prisma/client';
+
+@Injectable()
+export class PrintersService {
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationsService,
+  ) {}
+
+  async getMyProfile(userId: string) {
+    const profile = await this.prisma.printerProfile.findUnique({ where: { userId } });
+    if (!profile) throw new NotFoundException('Printer profile not found');
+    return profile;
+  }
+
+  async updateMyProfile(userId: string, dto: UpdatePrinterProfileDto) {
+    return this.prisma.printerProfile.upsert({
+      where: { userId },
+      update: dto,
+      create: { userId, ...dto },
+    });
+  }
+
+  async findEligiblePrinters(params: { material: string; requiredVolumeMm3?: number }) {
+    return this.prisma.printerProfile.findMany({
+      where: {
+        isVerified: true,
+        materialsSupported: { has: params.material },
+      },
+    });
+  }
+
+  async listMyJobs(printerId: string) {
+    return this.prisma.printJob.findMany({
+      where: { printerId },
+      include: { order: { include: { model: true } } },
+      orderBy: { id: 'desc' },
+    });
+  }
+
+  async updateJobStatus(
+    jobId: string,
+    printerId: string,
+    action: 'accept' | 'start' | 'complete' | 'fail',
+  ) {
+    const job = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!job || job.printerId !== printerId) {
+      throw new NotFoundException('Print job not found');
+    }
+
+    const now = new Date();
+
+    if (action === 'accept') {
+      if (job.acceptedAt) throw new BadRequestException('Job already accepted');
+      await this.prisma.printJob.update({ where: { id: jobId }, data: { acceptedAt: now } });
+      return this.prisma.printJob.findUnique({ where: { id: jobId } });
+    }
+
+    if (action === 'start') {
+      if (!job.acceptedAt) throw new BadRequestException('Job must be accepted first');
+      await this.prisma.printJob.update({ where: { id: jobId }, data: { startedAt: now } });
+      await this.prisma.order.update({
+        where: { id: job.orderId },
+        data: { status: OrderStatus.PRINTING },
+      });
+      return this.prisma.printJob.findUnique({ where: { id: jobId } });
+    }
+
+    if (action === 'complete') {
+      if (!job.startedAt) throw new BadRequestException('Job must be started first');
+      await this.prisma.printJob.update({ where: { id: jobId }, data: { completedAt: now } });
+      const order = await this.prisma.order.update({
+        where: { id: job.orderId },
+        data: { status: OrderStatus.SHIPPED },
+      });
+      const buyer = await this.prisma.user.findUnique({ where: { id: order.buyerId } });
+      if (buyer) {
+        this.notifications.orderShipped(buyer.email, order.id);
+      }
+      return this.prisma.printJob.findUnique({ where: { id: jobId } });
+    }
+
+    // action === 'fail'
+    await this.prisma.printJob.update({
+      where: { id: jobId },
+      data: { failureReason: 'Reported failed by printer owner' },
+    });
+    await this.prisma.order.update({
+      where: { id: job.orderId },
+      data: { status: OrderStatus.DISPUTED },
+    });
+    return this.prisma.printJob.findUnique({ where: { id: jobId } });
+  }
+}

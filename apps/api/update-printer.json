@@ -1,0 +1,10 @@
+{
+  "printerModel": "Prusa MK4",
+  "buildVolumeXMm": 250,
+  "buildVolumeYMm": 210,
+  "buildVolumeZMm": 220,
+  "materialsSupported": ["PLA", "PETG"],
+  "latitude": 19.076,
+  "longitude": 72.8777,
+  "avgTurnaroundDays": 3
+}
