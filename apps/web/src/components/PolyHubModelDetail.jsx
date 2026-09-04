@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ArrowLeft,
   ShieldCheck,
@@ -7,6 +7,9 @@ import {
   Star,
   CheckCircle2,
   CreditCard,
+  Printer,
+  MapPin,
+  Loader2,
 } from "lucide-react";
 import ModelViewer3D from "./ModelViewer3D";
 import { useModel } from "../hooks/useCatalog";
@@ -26,6 +29,17 @@ export default function PolyHubModelDetail({ modelId, onViewChange }) {
   const [starred, setStarred] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState("idle"); // idle | paying | paid | failed
   const [paymentError, setPaymentError] = useState(null);
+
+  // Printer assignment — separate from payment, since the backend doesn't
+  // require payment before a printer can be assigned. We only start
+  // looking once the order exists, and only surface it to the buyer once
+  // payment succeeds, to keep the flow linear.
+  const [candidates, setCandidates] = useState(null); // null = not fetched yet
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [candidatesError, setCandidatesError] = useState(null);
+  const [assigningId, setAssigningId] = useState(null);
+  const [assignedPrinter, setAssignedPrinter] = useState(null);
+  const [assignError, setAssignError] = useState(null);
 
   async function toggleStar() {
     try {
@@ -108,6 +122,43 @@ export default function PolyHubModelDetail({ modelId, onViewChange }) {
     } catch (err) {
       setPaymentStatus("failed");
       setPaymentError(err.message);
+    }
+  }
+
+  async function loadCandidates() {
+    if (!orderResult) return;
+    setLoadingCandidates(true);
+    setCandidatesError(null);
+    try {
+      const result = await api.get(`/matching/orders/${orderResult.id}/candidates`);
+      setCandidates(result);
+    } catch (err) {
+      setCandidatesError(err.message);
+    } finally {
+      setLoadingCandidates(false);
+    }
+  }
+
+  // Once payment succeeds, automatically look for eligible printers so the
+  // buyer doesn't have to click an extra "find printers" step.
+  useEffect(() => {
+    if (paymentStatus === "paid" && candidates === null) {
+      loadCandidates();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentStatus]);
+
+  async function handleAssign(printerId) {
+    setAssigningId(printerId);
+    setAssignError(null);
+    try {
+      await api.post(`/orders/${orderResult.id}/assign-printer`, { printerId });
+      const chosen = candidates?.find((c) => c.user?.id === printerId);
+      setAssignedPrinter(chosen || { user: { id: printerId } });
+    } catch (err) {
+      setAssignError(err.message);
+    } finally {
+      setAssigningId(null);
     }
   }
   if (loading) {
@@ -219,9 +270,80 @@ export default function PolyHubModelDetail({ modelId, onViewChange }) {
                   </div>
 
                   {paymentStatus === "paid" ? (
-                    <div className="flex items-center gap-2 rounded-lg border border-teal-400/30 bg-teal-400/10 p-4 text-teal-300">
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span className="text-sm font-medium">Payment successful</span>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 rounded-lg border border-teal-400/30 bg-teal-400/10 p-4 text-teal-300">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span className="text-sm font-medium">Payment successful</span>
+                      </div>
+
+                      {assignedPrinter ? (
+                        <div className="flex items-center gap-2 rounded-lg border border-teal-400/30 bg-teal-400/5 p-4 text-teal-300">
+                          <Printer className="h-4 w-4" />
+                          <div>
+                            <p className="text-sm font-medium">Printer assigned</p>
+                            <p className="text-xs text-zinc-400">
+                              {assignedPrinter.user?.name || "Printer"} will pick this up shortly
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+                          <h4 className="mb-3 flex items-center gap-1.5 text-xs font-mono font-semibold text-zinc-400">
+                            <Printer className="h-3.5 w-3.5 text-teal-400" /> CHOOSE A PRINTER
+                          </h4>
+
+                          {loadingCandidates && (
+                            <div className="flex items-center gap-2 text-xs text-zinc-500">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Finding eligible printers...
+                            </div>
+                          )}
+
+                          {candidatesError && (
+                            <p className="text-xs text-red-400">{candidatesError}</p>
+                          )}
+
+                          {!loadingCandidates && candidates && candidates.length === 0 && (
+                            <p className="text-xs text-zinc-500">
+                              No eligible printers found for this order's material yet — try
+                              again later, or reach out to support.
+                            </p>
+                          )}
+
+                          {!loadingCandidates && candidates && candidates.length > 0 && (
+                            <div className="space-y-2">
+                              {candidates.map((c) => (
+                                <div
+                                  key={c.user?.id}
+                                  className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+                                >
+                                  <div>
+                                    <p className="text-sm text-zinc-200">{c.user?.name || "Printer"}</p>
+                                    <p className="flex items-center gap-1 text-[11px] text-zinc-500">
+                                      {c.printerModel || "Printer"}
+                                      {c.distanceKm != null && (
+                                        <>
+                                          <MapPin className="ml-1.5 h-3 w-3 text-teal-400" />
+                                          {c.distanceKm.toFixed(1)} km away
+                                        </>
+                                      )}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => handleAssign(c.user.id)}
+                                    disabled={assigningId === c.user?.id}
+                                    className="rounded-md bg-teal-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-teal-300 disabled:opacity-50"
+                                  >
+                                    {assigningId === c.user?.id ? "Assigning..." : "Select"}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {assignError && <p className="mt-2 text-xs text-red-400">{assignError}</p>}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>

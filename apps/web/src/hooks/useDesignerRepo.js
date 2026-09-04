@@ -39,9 +39,21 @@ export function useDesignerRepo(user) {
     const fileFormat = file.name.split(".").pop().toLowerCase();
     const contentType = fileFormat === "glb" ? "model/gltf-binary" : "application/octet-stream";
 
+    // Server now enforces a real 200MB cap (baked into the S3 signature
+    // itself), so a file this large would fail the upload-url request —
+    // catching it here first gives a clear message instead of a generic
+    // network/validation error partway through.
+    const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      throw new Error(
+        `File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB) — the maximum is 200MB.`
+      );
+    }
+
     const { uploadUrl, key } = await api.post("/catalog/upload-url", {
       filename: file.name,
       contentType,
+      fileSize: file.size,
     });
 
     await fetch(uploadUrl, {

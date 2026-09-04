@@ -30,11 +30,18 @@ export class StorageService {
     return `${prefix}/${randomUUID()}.${ext}`;
   }
 
-  async getPresignedUploadUrl(key: string, contentType: string): Promise<string> {
+  // contentLength, when provided, is baked into the SigV4 signature — the
+  // uploader MUST send exactly that many bytes or the PUT fails with a
+  // signature mismatch. This is real server-side enforcement, not a
+  // client-side suggestion: even someone calling the API directly
+  // (bypassing your frontend's own checks) can't upload a different size
+  // than what they declared when requesting the URL.
+  async getPresignedUploadUrl(key: string, contentType: string, contentLength?: number): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
       ContentType: contentType,
+      ...(contentLength ? { ContentLength: contentLength } : {}),
     });
     return getSignedUrl(this.client, command, { expiresIn: 300 }); // 5 min
   }

@@ -113,6 +113,7 @@ model Model3D {
   thumbnailKey String?
   fileFormat   String
   volumeMm3    Float?
+  surfaceAreaMm2 Float?
   boundingBoxX Float?
   boundingBoxY Float?
   boundingBoxZ Float?

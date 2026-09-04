@@ -37,7 +37,11 @@ export class PrintersService {
   async listMyJobs(printerId: string) {
     return this.prisma.printJob.findMany({
       where: { printerId },
-      include: { order: { include: { model: true } } },
+      include: {
+        order: {
+          include: { model: true, payment: true, variant: true, buyer: { select: { name: true } } },
+        },
+      },
       orderBy: { id: 'desc' },
     });
   }
@@ -45,7 +49,7 @@ export class PrintersService {
   async updateJobStatus(
     jobId: string,
     printerId: string,
-    action: 'accept' | 'start' | 'complete' | 'fail',
+    action: 'accept' | 'decline' | 'start' | 'complete' | 'fail',
   ) {
     const job = await this.prisma.printJob.findUnique({ where: { id: jobId } });
     if (!job || job.printerId !== printerId) {
@@ -58,6 +62,21 @@ export class PrintersService {
       if (job.acceptedAt) throw new BadRequestException('Job already accepted');
       await this.prisma.printJob.update({ where: { id: jobId }, data: { acceptedAt: now } });
       return this.prisma.printJob.findUnique({ where: { id: jobId } });
+    }
+
+    if (action === 'decline') {
+      // Only valid before acceptance — declining an already-accepted job is
+      // a "fail", not a decline. Unassign this printer and put the order
+      // back in the matching pool rather than marking anything disputed.
+      if (job.acceptedAt) {
+        throw new BadRequestException('Job already accepted — use fail to report a problem instead');
+      }
+      await this.prisma.printJob.delete({ where: { id: jobId } });
+      await this.prisma.order.update({
+        where: { id: job.orderId },
+        data: { status: OrderStatus.PENDING },
+      });
+      return { declined: true, orderId: job.orderId };
     }
 
     if (action === 'start') {
@@ -76,11 +95,33 @@ export class PrintersService {
       const order = await this.prisma.order.update({
         where: { id: job.orderId },
         data: { status: OrderStatus.SHIPPED },
+        include: { variant: true },
       });
       const buyer = await this.prisma.user.findUnique({ where: { id: order.buyerId } });
       if (buyer) {
         this.notifications.orderShipped(buyer.email, order.id);
       }
+
+      // Log predicted-vs-actual for the active-learning loop described in
+      // the production plan (Milestone 5/6): feeding real outcomes back
+      // so the estimator can improve over time. Best-effort — a logging
+      // failure here should never block the job from completing.
+      const actualTimeMin = Math.round((now.getTime() - job.startedAt.getTime()) / 60000);
+      this.prisma.printJobOutcome
+        .upsert({
+          where: { printJobId: jobId },
+          create: {
+            printJobId: jobId,
+            predictedTimeMin: order.estimatedPrintTimeMin,
+            actualTimeMin,
+            material: order.variant?.material ?? null,
+            infillPercent: 20,
+            layerHeightMm: 0.2,
+          },
+          update: { actualTimeMin },
+        })
+        .catch((err) => console.warn(`Failed to log print job outcome for ${jobId}:`, err.message));
+
       return this.prisma.printJob.findUnique({ where: { id: jobId } });
     }
 

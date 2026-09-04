@@ -1,4 +1,5 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { IsString } from 'class-validator';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -19,11 +20,16 @@ class VerifyPasswordDto {
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  // Tighter than the global 100/min default — login/register are the
+  // classic brute-force/credential-stuffing targets, so they get their
+  // own stricter limit regardless of what the rest of the API allows.
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);

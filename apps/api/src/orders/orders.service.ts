@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MlService } from '../ml/ml.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ModelStatus, OrderStatus } from '@prisma/client';
 
@@ -9,6 +10,7 @@ export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private notifications: NotificationsService,
+    private ml: MlService,
   ) {}
 
   async create(buyerId: string, dto: CreateOrderDto) {
@@ -20,6 +22,7 @@ export class OrdersService {
     }
 
     let priceModifier = 0;
+    let variantMaterial: string | null = null;
     if (dto.variantId) {
       const variant = await this.prisma.modelVariant.findUnique({
         where: { id: dto.variantId },
@@ -28,10 +31,32 @@ export class OrdersService {
         throw new BadRequestException('Invalid variant for this model');
       }
       priceModifier = Number(variant.priceModifier);
+      variantMaterial = variant.material;
     }
 
     const unitPrice = Number(model.priceBase) + priceModifier;
     const estimatedCost = unitPrice * dto.quantity;
+
+    // Best-effort real print-time estimate. Doesn't touch estimatedCost —
+    // that stays the designer's sale price, exactly as before. This is a
+    // separate, additive prediction of how long the print will actually
+    // take, using real geometry when the model has it (STL uploads only
+    // for now) and falling back to the ML service's own heuristic
+    // otherwise (never blocks order creation if the ML service is down).
+    let estimatedPrintTimeMin: number | null = null;
+    if (model.volumeMm3) {
+      const estimate = await this.ml.estimatePrintJob({
+        volumeMm3: model.volumeMm3,
+        surfaceAreaMm2: model.surfaceAreaMm2,
+        boundingBoxX: model.boundingBoxX,
+        boundingBoxY: model.boundingBoxY,
+        boundingBoxZ: model.boundingBoxZ,
+        material: variantMaterial ?? 'PLA',
+      });
+      if (estimate) {
+        estimatedPrintTimeMin = Math.round(estimate.predictedTimeMin);
+      }
+    }
 
     const order = await this.prisma.order.create({
       data: {
@@ -41,6 +66,7 @@ export class OrdersService {
         quantity: dto.quantity,
         shippingAddress: dto.shippingAddress,
         estimatedCost,
+        estimatedPrintTimeMin,
         status: OrderStatus.PENDING,
       },
     });
@@ -57,7 +83,7 @@ export class OrdersService {
     return this.prisma.order.findMany({
       where: { buyerId },
       orderBy: { createdAt: 'desc' },
-      include: { model: true },
+      include: { model: true, payment: true, printJob: true },
     });
   }
 

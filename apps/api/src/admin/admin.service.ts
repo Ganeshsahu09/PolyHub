@@ -6,6 +6,13 @@ import { ModelStatus, OrderStatus } from '@prisma/client';
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
+  async listAllModels() {
+    return this.prisma.model3D.findMany({
+      include: { designer: { include: { user: { select: { name: true, email: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async setModelFlag(modelId: string, action: 'flag' | 'unflag') {
     const model = await this.prisma.model3D.findUnique({ where: { id: modelId } });
     if (!model) throw new NotFoundException('Model not found');

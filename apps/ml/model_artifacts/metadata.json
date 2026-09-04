@@ -1,0 +1,30 @@
+{
+  "feature_columns": [
+    "volume_mm3",
+    "surface_area_mm2",
+    "bounding_box_x",
+    "bounding_box_y",
+    "bounding_box_z",
+    "infill_pct",
+    "layer_height",
+    "material_PLA",
+    "material_PETG",
+    "material_ABS"
+  ],
+  "materials": [
+    "PLA",
+    "PETG",
+    "ABS"
+  ],
+  "trained_on_rows": 2160,
+  "test_rows": 432,
+  "time_model_metrics": {
+    "mae": 2009.9766213777975,
+    "mape_pct": 14.092501231919035
+  },
+  "filament_model_metrics": {
+    "mae": 4523.284500954879,
+    "mape_pct": 9.48508284690453
+  },
+  "version": "v1"
+}

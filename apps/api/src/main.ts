@@ -3,7 +3,11 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: true preserves the exact request bytes on req.rawBody
+  // alongside the normal parsed body — needed to verify Razorpay's
+  // webhook HMAC signature correctly. Every other route is unaffected;
+  // req.body still works exactly as before everywhere else.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',

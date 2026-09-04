@@ -12,6 +12,11 @@ import { FlagModelDto } from './dto/flag-model.dto';
 export class AdminController {
   constructor(private adminService: AdminService) {}
 
+  @Get('models')
+  listModels() {
+    return this.adminService.listAllModels();
+  }
+
   @Patch('models/:id/flag')
   setModelFlag(@Param('id') id: string, @Body() dto: FlagModelDto) {
     return this.adminService.setModelFlag(id, dto.action);

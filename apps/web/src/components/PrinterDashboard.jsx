@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "../context/AuthContext";
+import { usePrinterDashboard } from "../hooks/usePrinterDashboard";
 import {
   Power,
   Briefcase,
@@ -7,14 +9,12 @@ import {
   CheckCircle2,
   Layers,
   MapPin,
-  Clock,
   Sparkles,
   Check,
   X,
   ChevronRight,
   Printer,
   PackageCheck,
-  Scissors,
   ClipboardCheck,
   Truck,
   AlertCircle,
@@ -23,84 +23,29 @@ import {
 } from "lucide-react";
 
 /* ----------------------------------------------------------------------
- * MOCK DATA
+ * STAGES — matches the 3 real transitions the backend supports
+ * (accept -> start -> complete). There's no separate "slicing" timestamp
+ * tracked server-side, so we don't fake one here.
  * -------------------------------------------------------------------- */
-
-const METRICS = {
-  activeJobs: 3,
-  totalEarnings: 1284.5,
-  completedPrints: 96,
-  materials: [
-    { name: "PLA", level: 78 },
-    { name: "PETG", level: 34 },
-    { name: "Resin", level: 12 },
-  ],
-};
-
-const INCOMING_ORDERS = [
-  {
-    id: "ord-7741",
-    modelTitle: "Minimalist Headphone Stand",
-    buyer: "studio.northwind",
-    distance: "2.4 miles away",
-    material: "PLA",
-    quantity: 1,
-    aiPrintTime: "3h 10m",
-    payout: 12.5,
-    seed: 3,
-  },
-  {
-    id: "ord-7742",
-    modelTitle: "Articulated Robotic Hand v3",
-    buyer: "robo_hobbyist_22",
-    distance: "5.1 miles away",
-    material: "PETG",
-    quantity: 1,
-    aiPrintTime: "14h 30m",
-    payout: 38.0,
-    seed: 2,
-  },
-  {
-    id: "ord-7743",
-    modelTitle: "Modular Cable Tray System",
-    buyer: "voidframe_fan",
-    distance: "0.8 miles away",
-    material: "ABS",
-    quantity: 2,
-    aiPrintTime: "5h 45m",
-    payout: 19.0,
-    seed: 4,
-  },
-];
 
 const STEPPER_STAGES = [
   { id: "accepted", label: "Accepted", icon: ClipboardCheck },
-  { id: "slicing", label: "Slicing", icon: Scissors },
   { id: "printing", label: "Printing", icon: Printer },
-  { id: "ready", label: "Ready for Pickup/Shipping", icon: PackageCheck },
-];
-
-const INITIAL_ACTIVE_JOBS = [
-  {
-    id: "ord-7699",
-    modelTitle: "Geared Planetary Fidget",
-    buyer: "axiom.makes",
-    material: "PLA",
-    stageIndex: 1, // Slicing
-  },
-  {
-    id: "ord-7705",
-    modelTitle: "Lattice Vase — Parametric Set",
-    buyer: "plant_lady_eve",
-    material: "Resin",
-    stageIndex: 2, // Printing
-  },
+  { id: "shipped", label: "Shipped", icon: PackageCheck },
 ];
 
 /* ----------------------------------------------------------------------
  * SMALL SIMULATED MODEL THUMBNAIL (reused visual language from earlier
  * pages, scaled down — gives orders a sense of "what am I printing")
  * -------------------------------------------------------------------- */
+
+// Derives a stable pseudo-random "seed" from a real job/order id so the
+// thumbnail still varies per-job without needing a seed field from the API.
+function seedFromId(id = "") {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) % 997;
+  return (hash % 9) + 1;
+}
 
 function MiniModelThumb({ seed = 1 }) {
   const a = (seed * 37) % 40;
@@ -203,47 +148,46 @@ function StatCard({ icon: Icon, label, value, sublabel, accent = false }) {
   );
 }
 
-function MaterialInventoryCard() {
+// NOTE: the backend doesn't track per-material stock levels yet — only
+// which materials a printer supports (PrinterProfile.materialsSupported).
+// This shows the real supported list instead of faking stock percentages.
+function MaterialInventoryCard({ materials = [] }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-zinc-500">Material Inventory</p>
+        <p className="text-xs text-zinc-500">Materials Supported</p>
         <Layers className="h-4 w-4 text-zinc-400" />
       </div>
-      <div className="mt-3 space-y-2.5">
-        {METRICS.materials.map((m) => (
-          <div key={m.name}>
-            <div className="mb-1 flex items-center justify-between text-[11px]">
-              <span className="font-mono text-zinc-400">{m.name}</span>
-              <span className={`font-mono ${m.level < 20 ? "text-amber-400" : "text-zinc-500"}`}>
-                {m.level}%
-              </span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-              <div
-                className={`h-full rounded-full ${m.level < 20 ? "bg-amber-400" : "bg-teal-400"}`}
-                style={{ width: `${m.level}%` }}
-              />
-            </div>
-          </div>
-        ))}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {materials.length > 0 ? (
+          materials.map((m) => (
+            <span
+              key={m}
+              className="rounded-md bg-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-300"
+            >
+              {m}
+            </span>
+          ))
+        ) : (
+          <p className="text-xs text-zinc-600">None set — add materials in your printer profile</p>
+        )}
       </div>
     </div>
   );
 }
 
-function MetricsBar() {
+function MetricsBar({ stats }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <StatCard icon={Briefcase} label="Active Jobs" value={METRICS.activeJobs} accent sublabel="In progress now" />
+      <StatCard icon={Briefcase} label="Active Jobs" value={stats.activeCount} accent sublabel="In progress now" />
       <StatCard
         icon={DollarSign}
         label="Total Earnings"
-        value={`$${METRICS.totalEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-        sublabel="All-time"
+        value={`$${stats.totalEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+        sublabel="From paid, completed jobs"
       />
-      <StatCard icon={CheckCircle2} label="Completed Prints" value={METRICS.completedPrints} sublabel="Fulfilled orders" />
-      <MaterialInventoryCard />
+      <StatCard icon={CheckCircle2} label="Completed Prints" value={stats.completedCount} sublabel="Fulfilled orders" />
+      <MaterialInventoryCard materials={stats.materials} />
     </div>
   );
 }
@@ -252,7 +196,7 @@ function MetricsBar() {
  * INCOMING ORDERS QUEUE
  * -------------------------------------------------------------------- */
 
-function IncomingOrderRow({ order, onAccept, onDecline }) {
+function IncomingOrderRow({ order, onAccept, onDecline, busy }) {
   return (
     <motion.div
       layout
@@ -263,42 +207,50 @@ function IncomingOrderRow({ order, onAccept, onDecline }) {
       className="flex flex-col gap-4 border-b border-zinc-800 p-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="flex items-start gap-3">
-        <MiniModelThumb seed={order.seed} />
+        <MiniModelThumb seed={seedFromId(order.id)} />
         <div className="min-w-0">
           <p className="text-sm font-medium text-zinc-100">{order.modelTitle}</p>
           <p className="text-xs text-zinc-500">
             for <span className="text-zinc-400">{order.buyer}</span> · qty {order.quantity}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-zinc-500">
-            <span className="flex items-center gap-1">
-              <MapPin className="h-3 w-3 text-teal-400" />
-              {order.distance}
-            </span>
+            {order.distanceLabel && (
+              <span className="flex items-center gap-1">
+                <MapPin className="h-3 w-3 text-teal-400" />
+                {order.distanceLabel}
+              </span>
+            )}
             <span className="flex items-center gap-1">
               <Box className="h-3 w-3" />
               {order.material}
             </span>
-            <span className="flex items-center gap-1">
-              <Sparkles className="h-3 w-3 text-teal-400" />
-              AI est. <span className="font-mono text-zinc-400">{order.aiPrintTime}</span>
-            </span>
+            {order.aiPrintTime && (
+              <span className="flex items-center gap-1">
+                <Sparkles className="h-3 w-3 text-teal-400" />
+                Est. <span className="font-mono text-zinc-400">{order.aiPrintTime}</span>
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       <div className="flex items-center justify-between gap-3 sm:justify-end">
-        <span className="font-mono text-sm font-semibold text-teal-300">${order.payout.toFixed(2)}</span>
+        <span className="font-mono text-sm font-semibold text-teal-300">
+          {order.payout != null ? `$${order.payout.toFixed(2)}` : "Payout pending"}
+        </span>
         <div className="flex gap-2">
           <button
             onClick={() => onDecline(order.id)}
-            className="flex items-center gap-1 rounded-md border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/30 hover:text-red-400"
+            disabled={busy}
+            className="flex items-center gap-1 rounded-md border border-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/30 hover:text-red-400 disabled:opacity-50"
           >
             <X className="h-3.5 w-3.5" />
             Decline
           </button>
           <button
             onClick={() => onAccept(order.id)}
-            className="flex items-center gap-1 rounded-md bg-teal-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-teal-300"
+            disabled={busy}
+            className="flex items-center gap-1 rounded-md bg-teal-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-teal-300 disabled:opacity-50"
           >
             <Check className="h-3.5 w-3.5" />
             Accept Order
@@ -309,7 +261,7 @@ function IncomingOrderRow({ order, onAccept, onDecline }) {
   );
 }
 
-function IncomingOrdersQueue({ orders, onAccept, onDecline }) {
+function IncomingOrdersQueue({ orders, onAccept, onDecline, busyId }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/20">
       <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3.5">
@@ -322,7 +274,13 @@ function IncomingOrdersQueue({ orders, onAccept, onDecline }) {
       <AnimatePresence mode="popLayout">
         {orders.length > 0 ? (
           orders.map((order) => (
-            <IncomingOrderRow key={order.id} order={order} onAccept={onAccept} onDecline={onDecline} />
+            <IncomingOrderRow
+              key={order.id}
+              order={order}
+              onAccept={onAccept}
+              onDecline={onDecline}
+              busy={busyId === order.id}
+            />
           ))
         ) : (
           <div className="flex flex-col items-center gap-2 px-5 py-10 text-center">
@@ -390,28 +348,31 @@ function StageStepper({ stageIndex }) {
   );
 }
 
-function ActiveJobCard({ job, onAdvance }) {
-  const isFinalStage = job.stageIndex >= STEPPER_STAGES.length - 1;
+function ActiveJobCard({ job, onAdvance, busy }) {
+  // Active jobs only ever sit at stageIndex 0 (accepted) or 1 (printing) —
+  // once "complete" fires the job leaves this list entirely (order moves to
+  // SHIPPED), so there's no lingering "final stage" state to render here.
   const nextStage = STEPPER_STAGES[job.stageIndex + 1];
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <MiniModelThumb seed={(job.stageIndex + 5) % 9 || 1} />
+          <MiniModelThumb seed={seedFromId(job.id)} />
           <div>
             <p className="text-sm font-medium text-zinc-100">{job.modelTitle}</p>
             <p className="text-xs text-zinc-500">
               for <span className="text-zinc-400">{job.buyer}</span> · {job.material} ·{" "}
-              <span className="font-mono text-zinc-600">{job.id}</span>
+              <span className="font-mono text-zinc-600">{job.orderId?.slice(0, 8)}</span>
             </p>
           </div>
         </div>
 
-        {!isFinalStage ? (
+        {nextStage ? (
           <button
-            onClick={() => onAdvance(job.id)}
-            className="flex items-center gap-1.5 rounded-md bg-teal-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-teal-300"
+            onClick={() => onAdvance(job.id, job.stageIndex)}
+            disabled={busy}
+            className="flex items-center gap-1.5 rounded-md bg-teal-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-teal-300 disabled:opacity-50"
           >
             Mark as {nextStage.label}
             <ChevronRight className="h-3.5 w-3.5" />
@@ -431,7 +392,7 @@ function ActiveJobCard({ job, onAdvance }) {
   );
 }
 
-function ActivePrintingSection({ jobs, onAdvance }) {
+function ActivePrintingSection({ jobs, onAdvance, busyId }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/20">
       <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3.5">
@@ -444,7 +405,7 @@ function ActivePrintingSection({ jobs, onAdvance }) {
       {jobs.length > 0 ? (
         <div className="space-y-4 p-5">
           {jobs.map((job) => (
-            <ActiveJobCard key={job.id} job={job} onAdvance={onAdvance} />
+            <ActiveJobCard key={job.id} job={job} onAdvance={onAdvance} busy={busyId === job.id} />
           ))}
         </div>
       ) : (
@@ -463,45 +424,78 @@ function ActivePrintingSection({ jobs, onAdvance }) {
  * -------------------------------------------------------------------- */
 
 export default function PolyHubPrinterDashboard() {
+  const { user } = useAuth();
+  const {
+    profile,
+    incomingJobs,
+    activeJobs,
+    loading,
+    error,
+    actionError,
+    accept,
+    decline,
+    start,
+    complete,
+    stats: rawStats,
+  } = usePrinterDashboard(user);
+
+  // NOTE: PrinterProfile has no `isAvailable` field on the backend yet, so
+  // this toggle is local-only for now — it doesn't affect matching. Add a
+  // boolean column + wire it into MatchingService.findCandidates if you
+  // want this to actually gate order routing.
   const [online, setOnline] = useState(true);
-  const [pendingOrders, setPendingOrders] = useState(INCOMING_ORDERS);
-  const [activeJobs, setActiveJobs] = useState(INITIAL_ACTIVE_JOBS);
+  const [busyId, setBusyId] = useState(null);
 
-  const handleAccept = (orderId) => {
-    const order = pendingOrders.find((o) => o.id === orderId);
-    if (!order) return;
-
-    setActiveJobs((prev) => [
-      ...prev,
-      {
-        id: order.id,
-        modelTitle: order.modelTitle,
-        buyer: order.buyer,
-        material: order.material,
-        stageIndex: 0,
-      },
-    ]);
-    setPendingOrders((prev) => prev.filter((o) => o.id !== orderId));
-  };
-
-  const handleDecline = (orderId) => {
-    setPendingOrders((prev) => prev.filter((o) => o.id !== orderId));
-  };
-
-  const handleAdvance = (jobId) => {
-    setActiveJobs((prev) =>
-      prev.map((job) =>
-        job.id === jobId
-          ? { ...job, stageIndex: Math.min(job.stageIndex + 1, STEPPER_STAGES.length - 1) }
-          : job
-      )
-    );
-  };
-
-  const liveActiveCount = useMemo(
-    () => activeJobs.filter((j) => j.stageIndex < STEPPER_STAGES.length - 1).length,
-    [activeJobs]
+  const stats = useMemo(
+    () => ({ ...rawStats, materials: profile?.materialsSupported || [] }),
+    [rawStats, profile]
   );
+
+  const handleAccept = async (jobId) => {
+    setBusyId(jobId);
+    try {
+      await accept(jobId);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDecline = async (jobId) => {
+    setBusyId(jobId);
+    try {
+      await decline(jobId);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleAdvance = async (jobId, currentStageIndex) => {
+    setBusyId(jobId);
+    try {
+      if (currentStageIndex === 0) await start(jobId);
+      else await complete(jobId);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-sm text-zinc-500">
+        Loading your dashboard…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-2 bg-zinc-950 text-center">
+        <AlertCircle className="h-6 w-6 text-red-400" />
+        <p className="text-sm text-zinc-300">Couldn't load your printer dashboard</p>
+        <p className="text-xs text-zinc-600">{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 px-4 py-10 font-sans text-zinc-100 antialiased sm:px-6 lg:px-10">
@@ -515,7 +509,7 @@ export default function PolyHubPrinterDashboard() {
           </div>
           <span className="flex items-center gap-1.5 text-xs text-zinc-500">
             <TrendingUp className="h-3.5 w-3.5 text-teal-400" />
-            <span className="font-mono text-teal-300">{liveActiveCount}</span> jobs currently printing
+            <span className="font-mono text-teal-300">{activeJobs.length}</span> jobs currently printing
           </span>
         </div>
 
@@ -528,11 +522,23 @@ export default function PolyHubPrinterDashboard() {
           </div>
         )}
 
-        <MetricsBar />
+        {actionError && (
+          <div className="flex items-center gap-2.5 rounded-lg border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-xs text-red-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {actionError}
+          </div>
+        )}
+
+        <MetricsBar stats={stats} />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <IncomingOrdersQueue orders={pendingOrders} onAccept={handleAccept} onDecline={handleDecline} />
-          <ActivePrintingSection jobs={activeJobs} onAdvance={handleAdvance} />
+          <IncomingOrdersQueue
+            orders={incomingJobs}
+            onAccept={handleAccept}
+            onDecline={handleDecline}
+            busyId={busyId}
+          />
+          <ActivePrintingSection jobs={activeJobs} onAdvance={handleAdvance} busyId={busyId} />
         </div>
       </div>
     </div>
