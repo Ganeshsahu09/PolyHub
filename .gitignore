@@ -19,3 +19,4 @@ apps/web/dist/
 apps/ml/__pycache__/
 apps/ml/.venv/
 apps/ml/*.pyc
+*.bak
