@@ -42,6 +42,19 @@ export function AuthProvider({ children }) {
     }
   }
 
+  function mockLogin(role = "BUYER") {
+    const mockUser = {
+      id: "demo-user-1",
+      email: `${role.toLowerCase()}@polyhub.dev`,
+      name: `Demo ${role.charAt(0) + role.slice(1).toLowerCase().replace('_', ' ')}`,
+      roles: [role],
+    };
+    setTokens({ accessToken: "mock-token", refreshToken: "mock-refresh" });
+    setStoredUser(mockUser);
+    setUser(mockUser);
+    return mockUser;
+  }
+
   function logout() {
     clearTokens();
     localStorage.removeItem("polyhub_user");
@@ -49,7 +62,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, error, login, register, logout, mockLogin }}>
       {children}
     </AuthContext.Provider>
   );

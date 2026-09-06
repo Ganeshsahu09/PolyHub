@@ -111,14 +111,24 @@ function RootRedirect() {
   return <Navigate to="/login" replace />;
 }
 
-export default function App() {
+function MainLayout({ children }) {
+  const { user } = useAuth();
   return (
     <div className="relative min-h-screen bg-zinc-950">
       <TopNav />
-      <div className="pt-14">
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+      <div className={user ? "pt-14" : ""}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <MainLayout>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
 
           <Route
             path="/buyer"
@@ -190,7 +200,6 @@ export default function App() {
 
           <Route path="/" element={<RootRedirect />} />
         </Routes>
-      </div>
-    </div>
+    </MainLayout>
   );
 }
